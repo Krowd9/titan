@@ -13,7 +13,7 @@
     
     <modules>
         <module>titan-hbase-core</module>
-        <module>titan-hbase-094</module>
+<!--        <module>titan-hbase-094</module> -->
         <module>titan-hbase-096</module>
         <module>titan-hbase</module>
     </modules>

@@ -21,12 +21,14 @@
             <version>${project.version}</version>
             <optional>true</optional>
         </dependency>
+        <!--
         <dependency>
             <groupId>${project.groupId}</groupId>
             <artifactId>titan-hbase-094</artifactId>
             <version>${project.version}</version>
             <optional>true</optional>
         </dependency>
+        -->
         <dependency>
             <groupId>${project.groupId}</groupId>
             <artifactId>titan-hbase-096</artifactId>
