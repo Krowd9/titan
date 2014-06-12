@@ -1,7 +1,8 @@
 package com.thinkaurelius.titan.graphdb.relations;
 
+import com.google.common.base.Preconditions;
+import com.thinkaurelius.titan.core.EdgeLabel;
 import com.thinkaurelius.titan.core.TitanEdge;
-import com.thinkaurelius.titan.core.TitanLabel;
 import com.thinkaurelius.titan.core.TitanVertex;
 import com.thinkaurelius.titan.graphdb.internal.InternalVertex;
 import com.tinkerpop.blueprints.Direction;
@@ -13,10 +14,10 @@ import com.tinkerpop.blueprints.util.StringFactory;
 
 public abstract class AbstractEdge extends AbstractTypedRelation implements TitanEdge {
 
-    private final InternalVertex start;
-    private final InternalVertex end;
+    private InternalVertex start;
+    private InternalVertex end;
 
-    public AbstractEdge(long id, TitanLabel label, InternalVertex start, InternalVertex end) {
+    public AbstractEdge(long id, EdgeLabel label, InternalVertex start, InternalVertex end) {
         super(id, label);
 
         assert start != null && end != null;
@@ -34,15 +35,27 @@ public abstract class AbstractEdge extends AbstractTypedRelation implements Tita
         return type.getName();
     }
 
+    public void setVertexAt(int pos, InternalVertex vertex) {
+        Preconditions.checkArgument(vertex != null && getVertex(pos).equals(vertex));
+        switch (pos) {
+            case 0:
+                start = vertex;
+                break;
+            case 1:
+                end = vertex;
+                break;
+            default:
+                throw new IllegalArgumentException("Invalid position: " + pos);
+        }
+    }
+
     @Override
     public InternalVertex getVertex(int pos) {
         switch (pos) {
             case 0:
                 return start;
-
             case 1:
                 return end;
-
             default:
                 throw new IllegalArgumentException("Invalid position: " + pos);
         }
@@ -60,8 +73,8 @@ public abstract class AbstractEdge extends AbstractTypedRelation implements Tita
     }
 
     @Override
-    public TitanLabel getTitanLabel() {
-        return (TitanLabel)type;
+    public EdgeLabel getEdgeLabel() {
+        return (EdgeLabel)type;
     }
 
     @Override
@@ -71,12 +84,10 @@ public abstract class AbstractEdge extends AbstractTypedRelation implements Tita
 
     @Override
     public TitanVertex getOtherVertex(TitanVertex vertex) {
-        long otherId = vertex.getID();
-
-        if (start.getID() == otherId)
+        if (start.equals(vertex))
             return end;
 
-        if (end.getID() == otherId)
+        if (end.equals(vertex))
             return start;
 
         throw new IllegalArgumentException("Edge is not incident on vertex");
@@ -84,12 +95,12 @@ public abstract class AbstractEdge extends AbstractTypedRelation implements Tita
 
     @Override
     public boolean isDirected() {
-        return ((TitanLabel)type).isDirected();
+        return ((EdgeLabel)type).isDirected();
     }
 
     @Override
     public boolean isUnidirected() {
-        return ((TitanLabel)type).isUnidirected();
+        return ((EdgeLabel)type).isUnidirected();
     }
 
     @Override

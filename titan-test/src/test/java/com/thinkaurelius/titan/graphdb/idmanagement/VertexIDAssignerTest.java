@@ -3,7 +3,7 @@ package com.thinkaurelius.titan.graphdb.idmanagement;
 import com.thinkaurelius.titan.core.TitanFactory;
 import com.thinkaurelius.titan.core.TitanGraph;
 import com.thinkaurelius.titan.core.TitanVertex;
-import com.thinkaurelius.titan.util.time.StandardDuration;
+import com.thinkaurelius.titan.diskstorage.util.time.StandardDuration;
 import com.thinkaurelius.titan.diskstorage.configuration.ModifiableConfiguration;
 import com.thinkaurelius.titan.diskstorage.keycolumnvalue.StandardStoreFeatures;
 import com.thinkaurelius.titan.diskstorage.keycolumnvalue.StoreFeatures;
@@ -59,7 +59,8 @@ public class VertexIDAssignerTest {
         StoreFeatures features = fb.build();
 
         ModifiableConfiguration config = GraphDatabaseConfiguration.buildConfiguration();
-        config.set(GraphDatabaseConfiguration.IDS_PARTITION,partition);
+        config.set(GraphDatabaseConfiguration.CLUSTER_PARTITION,partition);
+        config.set(GraphDatabaseConfiguration.CLUSTER_MAX_PARTITIONS,1024);
         idAssigner = new VertexIDAssigner(config, idAuthority, features);
         System.out.println("Partition: " + partition);
         System.out.println("partitionMax: " + partitionMax);
@@ -91,7 +92,7 @@ public class VertexIDAssignerTest {
                     }
                     InternalRelation property = (InternalRelation) next.addProperty("age", 25);
                     if (flush) {
-                        idAssigner.assignID((InternalVertex) next);
+                        idAssigner.assignID((InternalVertex) next,next.getVertexLabel());
                         idAssigner.assignID(property);
                         if (edge != null) idAssigner.assignID(edge);
                     } else {

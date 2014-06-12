@@ -7,9 +7,9 @@ import com.google.common.collect.ImmutableMap;
 import com.thinkaurelius.titan.core.TitanConfigurationException;
 import com.thinkaurelius.titan.core.TitanException;
 import com.thinkaurelius.titan.core.TitanFactory;
-import com.thinkaurelius.titan.util.time.Duration;
+import com.thinkaurelius.titan.core.attribute.Duration;
 import com.thinkaurelius.titan.diskstorage.configuration.*;
-import com.thinkaurelius.titan.diskstorage.idmanagement.ConsistentKeyIDManager;
+import com.thinkaurelius.titan.diskstorage.idmanagement.ConsistentKeyIDAuthority;
 import com.thinkaurelius.titan.diskstorage.indexing.*;
 import com.thinkaurelius.titan.diskstorage.keycolumnvalue.*;
 import com.thinkaurelius.titan.diskstorage.keycolumnvalue.cache.CacheTransaction;
@@ -28,7 +28,7 @@ import com.thinkaurelius.titan.diskstorage.log.kcvs.KCVSLogManager;
 import com.thinkaurelius.titan.diskstorage.util.BackendOperation;
 import com.thinkaurelius.titan.diskstorage.util.MetricInstrumentedStore;
 import com.thinkaurelius.titan.diskstorage.configuration.backend.KCVSConfiguration;
-import com.thinkaurelius.titan.diskstorage.util.StandardTransactionHandleConfig;
+import com.thinkaurelius.titan.diskstorage.util.StandardBaseTransactionConfig;
 import com.thinkaurelius.titan.graphdb.configuration.TitanConstants;
 import com.thinkaurelius.titan.graphdb.transaction.TransactionConfiguration;
 import com.thinkaurelius.titan.util.system.ConfigurationUtil;
@@ -71,7 +71,6 @@ public class Backend implements LockerProvider {
 
     public static final String ID_STORE_NAME = "titan_ids";
 
-    public static final String TITAN_BACKEND_VERSION = "titan-version";
     public static final String METRICS_MERGED_STORE = "stores";
     public static final String METRICS_MERGED_CACHE = "caches";
     public static final String METRICS_CACHE_SUFFIX = ".cache";
@@ -91,7 +90,7 @@ public class Backend implements LockerProvider {
     public static final Map<String, Integer> STATIC_KEY_LENGTHS = new HashMap<String, Integer>() {{
         put(EDGESTORE_NAME, 8);
         put(EDGESTORE_NAME + LOCK_STORE_SUFFIX, 8);
-        put(ID_STORE_NAME, 4);
+        put(ID_STORE_NAME, 8);
     }};
 
     private final KeyColumnValueStoreManager storeManager;
@@ -209,11 +208,11 @@ public class Backend implements LockerProvider {
             //EdgeStore & VertexIndexStore
             KeyColumnValueStore idStore = storeManager.openDatabase(ID_STORE_NAME);
             if (reportMetrics) {
-                idStore = new MetricInstrumentedStore(idStore, getMetricsStoreName("idStore"));
+                idStore = new MetricInstrumentedStore(idStore, getMetricsStoreName(ID_STORE_NAME));
             }
             idAuthority = null;
             if (storeFeatures.isKeyConsistent()) {
-                idAuthority = new ConsistentKeyIDManager(idStore, storeManager, config);
+                idAuthority = new ConsistentKeyIDAuthority(idStore, storeManager, config);
             } else {
                 throw new IllegalStateException("Store needs to support consistent key or transactional operations for ID manager to guarantee proper id allocations");
             }
@@ -222,8 +221,8 @@ public class Backend implements LockerProvider {
             KeyColumnValueStore indexStoreRaw = storeManagerLocking.openDatabase(INDEXSTORE_NAME);
 
             if (reportMetrics) {
-                edgeStoreRaw = new MetricInstrumentedStore(edgeStoreRaw, getMetricsStoreName("edgeStore"));
-                indexStoreRaw = new MetricInstrumentedStore(indexStoreRaw, getMetricsStoreName("vertexIndexStore"));
+                edgeStoreRaw = new MetricInstrumentedStore(edgeStoreRaw, getMetricsStoreName(EDGESTORE_NAME));
+                indexStoreRaw = new MetricInstrumentedStore(indexStoreRaw, getMetricsStoreName(INDEXSTORE_NAME));
             }
 
             //Configure caches
@@ -266,7 +265,7 @@ public class Backend implements LockerProvider {
             systemConfig = getGlobalConfiguration(new BackendOperation.TransactionalProvider() {
                 @Override
                 public StoreTransaction openTx() throws StorageException {
-                    return storeManagerLocking.beginTransaction(StandardTransactionHandleConfig.of(
+                    return storeManagerLocking.beginTransaction(StandardBaseTransactionConfig.of(
                             configuration.get(TIMESTAMP_PROVIDER),
                             storeFeatures.getKeyConsistentTxConfig()));
                 }
@@ -321,12 +320,12 @@ public class Backend implements LockerProvider {
     }
 
     private String getMetricsStoreName(String storeName) {
-        return configuration.get(MERGE_BASIC_METRICS) ? METRICS_MERGED_STORE : storeName;
+        return configuration.get(METRICS_MERGE_STORES) ? METRICS_MERGED_STORE : storeName;
     }
 
     private String getMetricsCacheName(String storeName, boolean reportMetrics) {
         if (!reportMetrics) return null;
-        return configuration.get(MERGE_BASIC_METRICS) ? METRICS_MERGED_CACHE : storeName + METRICS_CACHE_SUFFIX;
+        return configuration.get(METRICS_MERGE_STORES) ? METRICS_MERGED_CACHE : storeName + METRICS_CACHE_SUFFIX;
     }
 
     public static LogManager getLogManager(Configuration config, String logName, KeyColumnValueStoreManager sm) {
@@ -376,7 +375,7 @@ public class Backend implements LockerProvider {
             return getGlobalConfiguration(new BackendOperation.TransactionalProvider() {
                 @Override
                 public StoreTransaction openTx() throws StorageException {
-                    return manager.beginTransaction(StandardTransactionHandleConfig.of(config.get(TIMESTAMP_PROVIDER),features.getKeyConsistentTxConfig()));
+                    return manager.beginTransaction(StandardBaseTransactionConfig.of(config.get(TIMESTAMP_PROVIDER),features.getKeyConsistentTxConfig()));
                 }
 
                 @Override
@@ -446,7 +445,7 @@ public class Backend implements LockerProvider {
         // Index transactions
         Map<String, IndexTransaction> indexTx = new HashMap<String, IndexTransaction>(indexes.size());
         for (Map.Entry<String, IndexProvider> entry : indexes.entrySet()) {
-            indexTx.put(entry.getKey(), new IndexTransaction(entry.getValue(), indexKeyRetriever.get(entry.getKey()), maxWriteTime));
+            indexTx.put(entry.getKey(), new IndexTransaction(entry.getValue(), indexKeyRetriever.get(entry.getKey()), configuration, maxWriteTime));
         }
 
         return new BackendTransaction(cacheTx, configuration, storeFeatures,
@@ -496,11 +495,8 @@ public class Backend implements LockerProvider {
 
     private static final Map<String, String> REGISTERED_STORAGE_MANAGERS = new HashMap<String, String>() {{
         put("berkeleyje", "com.thinkaurelius.titan.diskstorage.berkeleyje.BerkeleyJEStoreManager");
-        put("hazelcast", "com.thinkaurelius.titan.diskstorage.hazelcast.HazelcastCacheStoreManager");
-        put("hazelcastcache", "com.thinkaurelius.titan.diskstorage.hazelcast.HazelcastCacheStoreManager");
         put("infinispan", "com.thinkaurelius.titan.diskstorage.infinispan.InfinispanCacheStoreManager");
         put("cassandrathrift", "com.thinkaurelius.titan.diskstorage.cassandra.thrift.CassandraThriftStoreManager");
-        put("cassandra", "com.thinkaurelius.titan.diskstorage.cassandra.thrift.CassandraThriftStoreManager");
         put("cassandra", "com.thinkaurelius.titan.diskstorage.cassandra.astyanax.AstyanaxStoreManager");
         put("astyanax", "com.thinkaurelius.titan.diskstorage.cassandra.astyanax.AstyanaxStoreManager");
         put("hbase", "com.thinkaurelius.titan.diskstorage.hbase.HBaseStoreManager");

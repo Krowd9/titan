@@ -6,11 +6,12 @@ import com.sleepycat.je.*;
 import com.thinkaurelius.titan.diskstorage.PermanentStorageException;
 import com.thinkaurelius.titan.diskstorage.StaticBuffer;
 import com.thinkaurelius.titan.diskstorage.StorageException;
-import com.thinkaurelius.titan.diskstorage.TransactionHandleConfig;
+import com.thinkaurelius.titan.diskstorage.BaseTransactionConfig;
 import com.thinkaurelius.titan.diskstorage.common.LocalStoreManager;
 import com.thinkaurelius.titan.diskstorage.configuration.ConfigOption;
 import com.thinkaurelius.titan.diskstorage.configuration.Configuration;
 import com.thinkaurelius.titan.diskstorage.configuration.MergedConfiguration;
+import com.thinkaurelius.titan.diskstorage.keycolumnvalue.KeyRange;
 import com.thinkaurelius.titan.diskstorage.keycolumnvalue.StandardStoreFeatures;
 import com.thinkaurelius.titan.diskstorage.keycolumnvalue.StoreFeatures;
 import com.thinkaurelius.titan.diskstorage.keycolumnvalue.StoreTransaction;
@@ -18,16 +19,19 @@ import com.thinkaurelius.titan.diskstorage.keycolumnvalue.keyvalue.KVMutation;
 import com.thinkaurelius.titan.diskstorage.keycolumnvalue.keyvalue.KeyValueEntry;
 import com.thinkaurelius.titan.diskstorage.keycolumnvalue.keyvalue.OrderedKeyValueStoreManager;
 import com.thinkaurelius.titan.graphdb.configuration.GraphDatabaseConfiguration;
+import com.thinkaurelius.titan.graphdb.configuration.PreInitializeConfigOptions;
 import com.thinkaurelius.titan.util.system.IOUtils;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static com.thinkaurelius.titan.diskstorage.configuration.ConfigOption.disallowEmpty;
 
+@PreInitializeConfigOptions
 public class BerkeleyJEStoreManager extends LocalStoreManager implements OrderedKeyValueStoreManager {
 
     private static final Logger log = LoggerFactory.getLogger(BerkeleyJEStoreManager.class);
@@ -107,7 +111,12 @@ public class BerkeleyJEStoreManager extends LocalStoreManager implements Ordered
     }
 
     @Override
-    public BerkeleyJETx beginTransaction(final TransactionHandleConfig txCfg) throws StorageException {
+    public List<KeyRange> getLocalKeyPartition() throws StorageException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public BerkeleyJETx beginTransaction(final BaseTransactionConfig txCfg) throws StorageException {
         try {
             Transaction tx = null;
 
@@ -119,8 +128,13 @@ public class BerkeleyJEStoreManager extends LocalStoreManager implements Ordered
                 effectiveCfg.get(ISOLATION_LEVEL).configure(txnConfig);
                 tx = environment.beginTransaction(null, txnConfig);
             }
+            BerkeleyJETx btx = new BerkeleyJETx(tx, effectiveCfg.get(LOCK_MODE), txCfg);
 
-            return new BerkeleyJETx(tx, effectiveCfg.get(LOCK_MODE), txCfg);
+            if (log.isTraceEnabled()) {
+                log.trace("Berkeley tx created", new TransactionBegin(btx.toString()));
+            }
+
+            return btx;
         } catch (DatabaseException e) {
             throw new PermanentStorageException("Could not start BerkeleyJE transaction", e);
         }
@@ -146,6 +160,9 @@ public class BerkeleyJEStoreManager extends LocalStoreManager implements Ordered
             }
 
             Database db = environment.openDatabase(null, name, dbConfig);
+
+            log.debug("Opened database {}", name, new Throwable());
+
             BerkeleyJEKeyValueStore store = new BerkeleyJEKeyValueStore(name, db, this);
             stores.put(name, store);
             return store;
@@ -159,11 +176,24 @@ public class BerkeleyJEStoreManager extends LocalStoreManager implements Ordered
         for (Map.Entry<String,KVMutation> muts : mutations.entrySet()) {
             BerkeleyJEKeyValueStore store = openDatabase(muts.getKey());
             KVMutation mut = muts.getValue();
+
+            if (!mut.hasAdditions() && !mut.hasDeletions()) {
+                log.debug("Empty mutation set for {}, doing nothing", muts.getKey());
+            } else {
+                log.debug("Mutating {}", muts.getKey());
+            }
+
             if (mut.hasAdditions()) {
-                for (KeyValueEntry entry : mut.getAdditions()) store.insert(entry.getKey(),entry.getValue(),txh);
+                for (KeyValueEntry entry : mut.getAdditions()) {
+                    store.insert(entry.getKey(),entry.getValue(),txh);
+                    log.trace("Insertion on {}: {}", muts.getKey(), entry);
+                }
             }
             if (mut.hasDeletions()) {
-                for (StaticBuffer del : mut.getDeletions()) store.delete(del,txh);
+                for (StaticBuffer del : mut.getDeletions()) {
+                    store.delete(del,txh);
+                    log.trace("Deletion on {}: {}", muts.getKey(), del);
+                }
             }
         }
     }
@@ -172,7 +202,9 @@ public class BerkeleyJEStoreManager extends LocalStoreManager implements Ordered
         if (!stores.containsKey(db.getName())) {
             throw new IllegalArgumentException("Tried to remove an unkown database from the storage manager");
         }
-        stores.remove(db.getName());
+        String name = db.getName();
+        stores.remove(name);
+        log.debug("Removed database {}", name);
     }
 
 
@@ -182,6 +214,7 @@ public class BerkeleyJEStoreManager extends LocalStoreManager implements Ordered
             if (!stores.isEmpty())
                 throw new IllegalStateException("Cannot shutdown manager since some databases are still open");
             try {
+                // TODO this looks like a race condition
                 //Wait just a little bit before closing so that independent transaction threads can clean up.
                 Thread.sleep(30);
             } catch (InterruptedException e) {
@@ -204,6 +237,7 @@ public class BerkeleyJEStoreManager extends LocalStoreManager implements Ordered
         Transaction tx = null;
         for (String db : environment.getDatabaseNames()) {
             environment.removeDatabase(tx, db);
+            log.debug("Removed database {} (clearStorage)", db);
         }
         close();
         IOUtils.deleteFromDirectory(directory);
@@ -241,4 +275,12 @@ public class BerkeleyJEStoreManager extends LocalStoreManager implements Ordered
 
         abstract void configure(TransactionConfig cfg);
     };
+
+    private static class TransactionBegin extends Exception {
+        private static final long serialVersionUID = 1L;
+
+        private TransactionBegin(String msg) {
+            super(msg);
+        }
+    }
 }

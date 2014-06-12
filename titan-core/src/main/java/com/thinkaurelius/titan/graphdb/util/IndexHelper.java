@@ -1,12 +1,13 @@
 package com.thinkaurelius.titan.graphdb.util;
 
 import com.google.common.base.Preconditions;
-import com.thinkaurelius.titan.core.TitanKey;
+import com.thinkaurelius.titan.core.PropertyKey;
 import com.thinkaurelius.titan.core.attribute.Cmp;
 import com.thinkaurelius.titan.graphdb.query.graph.GraphCentricQueryBuilder;
 import com.thinkaurelius.titan.graphdb.transaction.StandardTitanTx;
 import com.thinkaurelius.titan.graphdb.types.IndexField;
 import com.thinkaurelius.titan.graphdb.types.InternalIndexType;
+import com.thinkaurelius.titan.graphdb.types.system.ImplicitKey;
 import com.tinkerpop.blueprints.Element;
 
 /**
@@ -35,9 +36,12 @@ public class IndexHelper {
             IndexField f = fields[i];
             Object value = values[i];
             Preconditions.checkNotNull(value);
-            TitanKey key = f.getFieldKey();
+            PropertyKey key = f.getFieldKey();
             Preconditions.checkArgument(key.getDataType().equals(value.getClass()),"Incompatible data types for: " + value);
             gb.has(key, Cmp.EQUAL,value);
+        }
+        if (index.hasSchemaTypeConstraint()) {
+            gb.has(ImplicitKey.LABEL,Cmp.EQUAL,index.getSchemaTypeConstraint().getName());
         }
         return gb;
     }

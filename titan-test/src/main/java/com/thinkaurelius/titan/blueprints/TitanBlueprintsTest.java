@@ -12,13 +12,29 @@ import java.lang.reflect.Method;
 import java.util.HashSet;
 import java.util.Set;
 
-// import com.thinkaurelius.titan.diskstorage.berkeleyje.BerkeleyJEStoreManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 
 /**
+ * Blueprints test suite adapted for Titan. The following test suites are not supported:
+ * <ul>
+ *     <li>IndexableGraphTestSuite</li>
+ *     <li>IndexTestSuite</li>
+ *     <li>KeyIndexableGraphTestSuite</li>
+ * </ul>
+ * since Titan handles indexing through the schema which isn't supported in Blueprints.
+ *
  * @author Matthias Broecheler (http://www.matthiasb.com)
  */
-
 public abstract class TitanBlueprintsTest extends GraphTest {
+
+    private static final Logger log =
+            LoggerFactory.getLogger(TitanBlueprintsTest.class);
+
+    private volatile String lastSeenMethodName;
+
+
 
     /*public void testTitanBenchmarkTestSuite() throws Exception {
         this.stopWatch();
@@ -32,32 +48,32 @@ public abstract class TitanBlueprintsTest extends GraphTest {
         printTestPerformance("VertexTestSuite", this.stopWatch());
     }
 
+    public void testVertexQueryTestSuite() throws Exception {
+        this.stopWatch();
+        doTestSuite(new VertexQueryTestSuite(this));
+        printTestPerformance("VertexQueryTestSuite", this.stopWatch());
+    }
+
     public void testEdgeTestSuite() throws Exception {
         this.stopWatch();
-        doTestSuite(new EdgeTestSuite(this));
+        doTestSuite(new TitanEdgeTestSuite(this));
         printTestPerformance("EdgeTestSuite", this.stopWatch());
     }
 
     public void testGraphTestSuite() throws Exception {
         this.stopWatch();                       //Excluded test case because toString representation is non-standard
-        doTestSuite(new GraphTestSuite(this), ImmutableSet.of("testStringRepresentation","testDataTypeValidationOnProperties"));
+        doTestSuite(new GraphTestSuite(this), ImmutableSet.of("testStringRepresentation"));
         printTestPerformance("GraphTestSuite", this.stopWatch());
     }
 
-    public void testQueryTestSuite() throws Exception {
+    public void testGraphQueryTestSuite() throws Exception {
         this.stopWatch();
         doTestSuite(new TitanGraphQueryTestSuite(this));
         printTestPerformance("GraphQueryTestSuite", this.stopWatch());
     }
-    
-//    public void testKeyIndexableGraphTestSuite() throws Exception {
-//        this.stopWatch();                                   //Excluded test cases because Titan does not yet support dropping or modifying key indexes
-//        doTestSuite(new KeyIndexableGraphTestSuite(this), ImmutableSet.of("testAutoIndexKeyDroppingWithPersistence", "testReIndexingOfElements"));
-//        printTestPerformance("KeyIndexableGraphTestSuite", this.stopWatch());
-//    }
 
     public void testTransactionalGraphTestSuite() throws Exception {
-        this.stopWatch();             
+        this.stopWatch();
         Set<String> excludedTests = new HashSet<String>();
         if (!supportsMultipleGraphs()) excludedTests.add("testCompetingThreadsOnMultipleDbInstances");
         doTestSuite(new TransactionalTitanGraphTestSuite(this), excludedTests);
@@ -96,9 +112,14 @@ public abstract class TitanBlueprintsTest extends GraphTest {
 
     public abstract void cleanUp() throws StorageException;
 
-    public abstract void startUp();
+    public abstract void beforeSuite();
 
-    public abstract void shutDown();
+    public void afterSuite() {
+        // Most impls do nothing by default
+    }
+    protected String getMostRecentMethodName() {
+        return lastSeenMethodName;
+    }
 
     @Override
     public void doTestSuite(TestSuite testSuite) throws Exception {
@@ -106,27 +127,29 @@ public abstract class TitanBlueprintsTest extends GraphTest {
     }
 
     public void doTestSuite(TestSuite testSuite, Set<String> ignoreTests) throws Exception {
-        startUp();
+        beforeSuite();
         cleanUp();
         for (Method method : testSuite.getClass().getMethods()) {
             if (ignoreTests.contains(method.getName())
                     || !method.getName().startsWith("test")) continue;
+            String name = testSuite.getClass().getSimpleName() + "." + method.getName();
+            lastSeenMethodName = name;
             try {
 
-                System.out.println("Testing " + method.getName() + "...");
+                log.info("Testing " + name + "...");
                 method.invoke(testSuite);
 //                System.out.println("##################### MEMORY ############");
 //                System.out.println(MemoryAssess.getMemoryUse()/1024);
 //                graph = null;
             } catch (Throwable e) {
-                System.err.println("Encountered error in " + method.getName());
+                log.error("Encountered error in " + name);
                 e.printStackTrace();
                 throw new RuntimeException(e);
             } finally {
                 cleanUp();
             }
         }
-        shutDown();
+        afterSuite();
     }
 
 

@@ -1,28 +1,36 @@
 package com.thinkaurelius.titan.graphdb.types.system;
 
+import com.thinkaurelius.titan.core.EdgeLabel;
 import com.thinkaurelius.titan.core.Multiplicity;
-import com.thinkaurelius.titan.core.TitanLabel;
-import com.thinkaurelius.titan.graphdb.internal.RelationCategory;
 import com.thinkaurelius.titan.graphdb.internal.TitanSchemaCategory;
 import com.tinkerpop.blueprints.Direction;
 
-public class BaseLabel extends BaseType implements TitanLabel {
+public class BaseLabel extends BaseRelationType implements EdgeLabel {
 
-    public static final BaseLabel TypeDefinitionEdge =
-            new BaseLabel("TypeRelated", 36);
+    public static final BaseLabel SchemaDefinitionEdge =
+            new BaseLabel("SchemaRelated", 36, Direction.BOTH, Multiplicity.MULTI);
 
-    private BaseLabel(String name, int id) {
-        super(name, id, TitanSchemaCategory.LABEL);
+    public static final BaseLabel VertexLabelEdge =
+            new BaseLabel("vertexlabel", 2, Direction.OUT, Multiplicity.MANY2ONE);
+
+
+    private final Direction directionality;
+    private final Multiplicity multiplicity;
+
+    private BaseLabel(String name, int id, Direction uniDirectionality, Multiplicity multiplicity) {
+        super(name, id, TitanSchemaCategory.EDGELABEL);
+        this.directionality = uniDirectionality;
+        this.multiplicity = multiplicity;
     }
 
     @Override
     public long[] getSignature() {
-        return new long[]{BaseKey.TypeDefinitionDesc.getID()};
+        return new long[]{BaseKey.SchemaDefinitionDesc.getID()};
     }
 
     @Override
     public Multiplicity getMultiplicity() {
-        return Multiplicity.MULTI;
+        return multiplicity;
     }
 
     @Override
@@ -42,12 +50,12 @@ public class BaseLabel extends BaseType implements TitanLabel {
 
     @Override
     public boolean isUnidirected() {
-        return false;
+        return isUnidirected(Direction.OUT);
     }
 
     @Override
     public boolean isUnidirected(Direction dir) {
-        return dir==Direction.BOTH;
+        return dir== directionality;
     }
 
 

@@ -2,6 +2,7 @@ package com.thinkaurelius.titan.diskstorage.keycolumnvalue.cache;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
+import com.thinkaurelius.titan.core.attribute.Duration;
 import com.thinkaurelius.titan.diskstorage.Entry;
 import com.thinkaurelius.titan.diskstorage.StaticBuffer;
 import com.thinkaurelius.titan.diskstorage.StorageException;
@@ -58,7 +59,7 @@ public abstract class KCVSCache implements KeyColumnValueStore {
 
     protected final StoreTransaction getTx(StoreTransaction txh) {
         assert txh instanceof CacheTransaction;
-        return ((CacheTransaction) txh).getWrappedTransactionHandle();
+        return ((CacheTransaction) txh).getWrappedTransaction();
     }
 
     @Override
@@ -74,11 +75,6 @@ public abstract class KCVSCache implements KeyColumnValueStore {
     @Override
     public KeyIterator getKeys(SliceQuery columnQuery, StoreTransaction txh) throws StorageException {
         return store.getKeys(columnQuery, getTx(txh));
-    }
-
-    @Override
-    public List<KeyRange> getLocalKeyPartition() throws StorageException {
-        return store.getLocalKeyPartition();
     }
 
     @Override

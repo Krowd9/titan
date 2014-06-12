@@ -1,7 +1,11 @@
 package com.thinkaurelius.titan.graphdb.relations;
 
 import com.thinkaurelius.titan.core.*;
+import com.thinkaurelius.titan.core.attribute.Cmp;
 import com.thinkaurelius.titan.graphdb.internal.InternalRelation;
+import com.thinkaurelius.titan.graphdb.query.vertex.VertexCentricQueryBuilder;
+import com.thinkaurelius.titan.graphdb.transaction.StandardTitanTx;
+import com.thinkaurelius.titan.graphdb.types.system.ImplicitKey;
 import com.thinkaurelius.titan.util.encoding.LongEncoding;
 import com.tinkerpop.blueprints.Direction;
 import org.apache.commons.lang.builder.HashCodeBuilder;
@@ -34,6 +38,10 @@ public final class RelationIdentifier {
                     r.getType().getID(),
                     r.getID(),(r.isEdge()?r.getVertex(1).getID():0));
         } else return null;
+    }
+
+    public long getRelationId() {
+        return relationId;
     }
 
     public static final RelationIdentifier get(long[] ids) {
@@ -101,17 +109,24 @@ public final class RelationIdentifier {
         if (v == null) return null;
         TitanVertex typeVertex = tx.getVertex(typeId);
         if (typeVertex == null) return null;
-        if (!(typeVertex instanceof TitanType))
+        if (!(typeVertex instanceof RelationType))
             throw new IllegalArgumentException("Invalid RelationIdentifier: typeID does not reference a type");
 
-        TitanType type = (TitanType)typeVertex;
+        RelationType type = (RelationType)typeVertex;
         Iterable<? extends TitanRelation> rels;
-        if (((TitanType) typeVertex).isEdgeLabel()) {
-            TitanVertex in = tx.getVertex(inVertexId);
-            if (in==null) return null;
-            rels = v.query().types((TitanLabel)type).direction(Direction.OUT).adjacentVertex(in).titanEdges();
+        if (((RelationType) typeVertex).isEdgeLabel()) {
+            Direction dir = Direction.OUT;
+            TitanVertex other = tx.getVertex(inVertexId);
+            if (other==null) return null;
+            if (((StandardTitanTx)tx).isPartitionedVertex(v) && !((StandardTitanTx)tx).isPartitionedVertex(other)) { //Swap for likely better performance
+                TitanVertex tmp = other;
+                other = v;
+                v = tmp;
+                dir = Direction.IN;
+            }
+            rels = ((VertexCentricQueryBuilder)v.query()).noPartitionRestriction().types((EdgeLabel) type).direction(dir).adjacent(other).titanEdges();
         } else {
-            rels = v.query().types((TitanKey)type).properties();
+            rels = ((VertexCentricQueryBuilder)v.query()).noPartitionRestriction().types((PropertyKey)type).properties();
         }
 
         for (TitanRelation r : rels) {

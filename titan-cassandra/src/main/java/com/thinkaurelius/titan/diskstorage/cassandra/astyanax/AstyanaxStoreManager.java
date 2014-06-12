@@ -7,6 +7,7 @@ import com.netflix.astyanax.*;
 import com.netflix.astyanax.connectionpool.Host;
 import com.netflix.astyanax.connectionpool.NodeDiscoveryType;
 import com.netflix.astyanax.connectionpool.RetryBackoffStrategy;
+import com.netflix.astyanax.connectionpool.SSLConnectionContext;
 import com.netflix.astyanax.connectionpool.exceptions.ConnectionException;
 import com.netflix.astyanax.connectionpool.impl.*;
 import com.netflix.astyanax.ddl.ColumnFamilyDefinition;
@@ -24,7 +25,9 @@ import com.thinkaurelius.titan.diskstorage.configuration.ConfigOption;
 import com.thinkaurelius.titan.diskstorage.configuration.Configuration;
 import com.thinkaurelius.titan.diskstorage.Entry;
 import com.thinkaurelius.titan.diskstorage.keycolumnvalue.KCVMutation;
+import com.thinkaurelius.titan.diskstorage.keycolumnvalue.KeyRange;
 import com.thinkaurelius.titan.diskstorage.keycolumnvalue.StoreTransaction;
+import com.thinkaurelius.titan.graphdb.configuration.PreInitializeConfigOptions;
 
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Token;
@@ -44,6 +47,7 @@ import java.util.concurrent.TimeUnit;
 import static com.thinkaurelius.titan.diskstorage.cassandra.CassandraTransaction.getTx;
 import static com.thinkaurelius.titan.graphdb.configuration.GraphDatabaseConfiguration.STORAGE_NS;
 
+@PreInitializeConfigOptions
 public class AstyanaxStoreManager extends AbstractCassandraStoreManager {
 
     private static final Logger log = LoggerFactory.getLogger(AstyanaxStoreManager.class);
@@ -301,8 +305,7 @@ public class AstyanaxStoreManager extends AbstractCassandraStoreManager {
                 .setConsistencyLevel(getTx(txh).getWriteConsistencyLevel().getAstyanax())
                 .withRetryPolicy(retryPolicy.duplicate());
 
-        final Timestamp timestamp = getTimestamp(txh);
-
+        final MaskedTimestamp commitTime = new MaskedTimestamp(txh);
 
         for (Map.Entry<String, Map<StaticBuffer, KCVMutation>> batchentry : batch.entrySet()) {
             String storeName = batchentry.getKey();
@@ -320,7 +323,7 @@ public class AstyanaxStoreManager extends AbstractCassandraStoreManager {
 
                 if (titanMutation.hasDeletions()) {
                     ColumnListMutation<ByteBuffer> dels = m.withRow(columnFamily, key);
-                    dels.setTimestamp(timestamp.getDeletionTime(times.getUnit()));
+                    dels.setTimestamp(commitTime.getDeletionTime(times.getUnit()));
 
                     for (StaticBuffer b : titanMutation.getDeletions())
                         dels.deleteColumn(b.as(StaticBuffer.BB_FACTORY));
@@ -328,7 +331,7 @@ public class AstyanaxStoreManager extends AbstractCassandraStoreManager {
 
                 if (titanMutation.hasAdditions()) {
                     ColumnListMutation<ByteBuffer> upds = m.withRow(columnFamily, key);
-                    upds.setTimestamp(timestamp.getAdditionTime(times.getUnit()));
+                    upds.setTimestamp(commitTime.getAdditionTime(times.getUnit()));
 
                     for (Entry e : titanMutation.getAdditions())
                         upds.putColumn(e.getColumnAs(StaticBuffer.BB_FACTORY), e.getValueAs(StaticBuffer.BB_FACTORY));
@@ -342,7 +345,12 @@ public class AstyanaxStoreManager extends AbstractCassandraStoreManager {
             throw new TemporaryStorageException(e);
         }
 
-        sleepAfterWrite(txh, timestamp);
+        sleepAfterWrite(txh, commitTime);
+    }
+
+    @Override
+    public List<KeyRange> getLocalKeyPartition() throws StorageException {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -453,6 +461,10 @@ public class AstyanaxStoreManager extends AbstractCassandraStoreManager {
             cpool.setAuthenticationCredentials(new SimpleAuthenticationCredentials(username, password));
         }
 
+        if (config.get(SSL_ENABLED)) {
+            cpool.setSSLConnectionContext(new SSLConnectionContext(config.get(SSL_TRUSTSTORE_LOCATION), config.get(SSL_TRUSTSTORE_PASSWORD)));
+        }
+
         AstyanaxContext.Builder ctxBuilder = new AstyanaxContext.Builder();
 
         // Standard context builder options
@@ -496,14 +508,10 @@ public class AstyanaxStoreManager extends AbstractCassandraStoreManager {
 
         log.debug("Creating keyspace {}...", keySpaceName);
         try {
-
-            Map<String, String> stratops = ImmutableMap.of(
-                "replication_factor", String.valueOf(replicationFactor));
-
             ksDef = cl.makeKeyspaceDefinition()
                     .setName(keySpaceName)
-                    .setStrategyClass("org.apache.cassandra.locator.SimpleStrategy")
-                    .setStrategyOptions(stratops);
+                    .setStrategyClass(storageConfig.get(REPLICATION_STRATEGY))
+                    .setStrategyOptions(strategyOptions);
             cl.addKeyspace(ksDef);
 
             log.debug("Created keyspace {}", keySpaceName);
